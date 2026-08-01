@@ -1,0 +1,75 @@
+name: Exposure Reasoning Scan
+
+# Simulates the real integration story: a new vulnerability finding shows up
+# (normally from Snyk/CloudTrail webhooks) and the CI pipeline automatically
+# triggers the agent to investigate reachability instead of just posting the
+# raw CVSS score. The agent itself runs on Vercel; this workflow calls it via
+# a Modal-hosted endpoint (ci-demo/modal_app.py) as the CI/CD compute step,
+# and posts the holistic verdict directly on the PR — no manual triage step.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch: {}
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Investigate demo findings via the Modal-hosted agent
+        id: scan
+        run: |
+          MODAL_URL="https://abdulaaqib2--exposure-reasoning-ci-scan.modal.run"
+
+          for FINDING in SNYK-2026-001 SNYK-2026-002; do
+            echo "Investigating $FINDING..."
+            curl -s -X POST "$MODAL_URL" \
+              -H "Content-Type: application/json" \
+              -d "{\"findingId\":\"$FINDING\"}" \
+              --max-time 100 \
+              -o "/tmp/${FINDING}.json"
+          done
+
+      - name: Build PR comment from verdicts
+        id: comment
+        run: |
+          {
+            echo "## 🔎 Exposure Reasoning Agent — automated triage"
+            echo ""
+            echo "Ran on every PR via a [Modal](https://modal.com)-hosted endpoint calling the deployed agent. Combines code-reachability, real AWS IAM blast-radius, and vulnerability capability — not just CVSS score."
+            echo ""
+            for FINDING in SNYK-2026-001 SNYK-2026-002; do
+              python3 - "$FINDING" <<'PYEOF'
+          import json, sys
+          finding_id = sys.argv[1]
+          with open(f"/tmp/{finding_id}.json") as f:
+              data = json.load(f)
+          v = data.get("verdict", {})
+          sev = v.get("severity", "UNKNOWN")
+          badge = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}.get(sev, "⚪")
+          print(f"### {badge} `{finding_id}` — {sev}")
+          print()
+          print(v.get("pathSummary", "(no summary produced)"))
+          print()
+          print(f"**Recommendation:** {v.get('recommendation', 'n/a')}")
+          print()
+          PYEOF
+            done
+          } > /tmp/pr-comment.md
+          cat /tmp/pr-comment.md
+
+      - name: Post verdict as PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/pr-comment.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
