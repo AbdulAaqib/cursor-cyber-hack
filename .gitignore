@@ -1,3 +1,7 @@
 # OS junk (repo-wide)
 .DS_Store
 *.pem
+
+# python
+__pycache__/
+*.pyc
