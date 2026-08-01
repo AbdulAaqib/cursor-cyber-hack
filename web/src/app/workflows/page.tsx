@@ -1,7 +1,109 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { motion, useReducedMotion } from 'framer-motion';
+
+interface GithubRun {
+  id: number;
+  runNumber: number;
+  status: string;
+  conclusion: string | null;
+  branch: string;
+  event: string;
+  title: string;
+  createdAt: string;
+  htmlUrl: string;
+}
+
+function RepoStatusCard() {
+  const [expanded, setExpanded] = useState(false);
+  const [runs, setRuns] = useState<GithubRun[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const REPO = 'AbdulAaqib/cursor-cyber-hack';
+
+  const toggle = async () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !runs && !loading) {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch('/api/status/github');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? 'Failed to fetch runs');
+        setRuns(data.runs);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load runs');
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  return (
+    <div className="rounded border border-border-hairline bg-panel overflow-hidden">
+      <button
+        onClick={toggle}
+        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-background/50 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-xs text-foreground font-semibold">{REPO}</span>
+          <span className="rounded border border-border-hairline px-1.5 py-0.5 font-mono text-[10px] text-muted">
+            GitHub Actions
+          </span>
+        </div>
+        <span className="font-mono text-xs text-muted">{expanded ? '▾' : '▸'}</span>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-border-hairline px-4 py-3">
+          {loading && <p className="font-mono text-xs text-muted">Fetching live run history...</p>}
+          {error && <p className="font-mono text-xs text-critical">{error}</p>}
+          {runs && runs.length === 0 && (
+            <p className="font-mono text-xs text-muted">No runs found.</p>
+          )}
+          {runs && runs.length > 0 && (
+            <ul className="space-y-2">
+              {runs.map((run) => (
+                <li key={run.id}>
+                  <a
+                    href={run.htmlUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-between gap-3 rounded border border-border-hairline bg-background px-3 py-2 hover:border-accent/30 transition-colors"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${
+                          run.conclusion === 'success'
+                            ? 'bg-low'
+                            : run.conclusion === 'failure'
+                              ? 'bg-critical'
+                              : run.status === 'in_progress'
+                                ? 'bg-accent animate-status-pulse'
+                                : 'bg-muted'
+                        }`}
+                      />
+                      <span className="font-mono text-[11px] text-foreground truncate">
+                        #{run.runNumber} {run.title}
+                      </span>
+                    </div>
+                    <span className="font-mono text-[10px] text-muted flex-shrink-0">
+                      {run.branch} &middot; {run.event}
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function WorkflowsPage() {
   const reduced = useReducedMotion();
@@ -230,6 +332,27 @@ export default function WorkflowsPage() {
               Modal dashboard: see your Modal apps for endpoint details
             </span>
           </div>
+        </div>
+      </motion.section>
+
+      {/* Linked Projects */}
+      <motion.section
+        className="border-b border-border-hairline px-6 py-10"
+        initial="hidden"
+        whileInView="visible"
+        viewport={{ once: true, amount: 0.2 }}
+        variants={sectionReveal}
+      >
+        <div className="max-w-4xl mx-auto">
+          <div className="flex items-center gap-3 mb-6">
+            <span className="h-2 w-2 rounded-full bg-accent" />
+            <h2 className="font-mono text-sm font-semibold tracking-wide">Linked Projects</h2>
+          </div>
+          <p className="text-sm text-muted mb-6 max-w-2xl">
+            Click a repo to see its live CI pipeline runs, pulled directly from GitHub&apos;s API right
+            now — not a screenshot. Click a run to see its full logs on GitHub.
+          </p>
+          <RepoStatusCard />
         </div>
       </motion.section>
 
