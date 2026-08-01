@@ -1,13 +1,22 @@
 name: Exposure Reasoning Scan
 
+# Commit-driven: runs on every push (any branch) and every PR, not just PRs.
 # Simulates the real integration story: a new vulnerability finding shows up
 # (normally from Snyk/CloudTrail webhooks) and the CI pipeline automatically
 # triggers the agent to investigate reachability instead of just posting the
 # raw CVSS score. The agent itself runs on Vercel; this workflow calls it via
-# a Modal-hosted endpoint (ci-demo/modal_app.py) as the CI/CD compute step,
-# and posts the holistic verdict directly on the PR — no manual triage step.
+# a Modal-hosted endpoint (ci-demo/modal_app.py) as the CI/CD compute step.
+#
+# SAFETY BOUNDARY: this workflow only DETECTS and REPORTS (posts a verdict
+# comment). It deliberately does NOT call /api/remediate/* — remediation
+# (detaching the AWS policy, opening a fix PR) requires a human to click
+# "Approve & Apply" in the app itself. Do not wire this workflow to trigger
+# remediation automatically; that would remove the human-in-the-loop
+# safeguard the remediation feature was specifically built to have.
 
 on:
+  push:
+    branches: ["**"]
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_dispatch: {}
@@ -17,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
+      contents: write
     steps:
       - name: Investigate demo findings via the Modal-hosted agent
         id: scan
@@ -38,7 +48,9 @@ jobs:
           {
             echo "## 🔎 Exposure Reasoning Agent — automated triage"
             echo ""
-            echo "Ran on every PR via a [Modal](https://modal.com)-hosted endpoint calling the deployed agent. Combines code-reachability, real AWS IAM blast-radius, and vulnerability capability — not just CVSS score."
+            echo "Triggered by this commit via a [Modal](https://modal.com)-hosted endpoint calling the deployed agent. Combines code-reachability, real AWS IAM blast-radius, and vulnerability capability — not just CVSS score."
+            echo ""
+            echo "**Detection only.** Fixing a CRITICAL/HIGH finding requires a human to review and click \"Approve & Apply\" at https://cursor-cyber-hack.vercel.app — this pipeline does not auto-remediate."
             echo ""
             for FINDING in SNYK-2026-001 SNYK-2026-002; do
               python3 - "$FINDING" <<'PYEOF'
@@ -71,5 +83,19 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Post verdict as commit comment
+        if: github.event_name == 'push'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/pr-comment.md', 'utf8');
+            await github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
               body,
             });
