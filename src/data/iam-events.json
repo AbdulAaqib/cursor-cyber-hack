@@ -1,0 +1,6 @@
+[
+  { "event": "AssumeRole", "source": "lambda-log-processor", "target": "data-processor-role" },
+  { "event": "PassRole", "source": "data-processor-role", "target": "admin-deploy-role" },
+  { "event": "AttachRolePolicy", "source": "admin-deploy-role", "target": "AdministratorAccess" },
+  { "event": "AssumeRole", "source": "ci-deploy-bot", "target": "readonly-analytics-role" }
+]

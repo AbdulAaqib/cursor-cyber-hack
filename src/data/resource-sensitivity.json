@@ -1,0 +1,8 @@
+{
+  "lambda-log-processor": { "sensitivity": "LOW", "reason": "Internal Lambda function processing application logs" },
+  "data-processor-role": { "sensitivity": "MEDIUM", "reason": "IAM role for log processing, has PassRole permission", "pendingChange": "Open PR #482 would add s3:GetObject on customer-data-bucket to this role" },
+  "admin-deploy-role": { "sensitivity": "CRITICAL", "reason": "Has AdministratorAccess policy attached — full account control" },
+  "AdministratorAccess": { "sensitivity": "CRITICAL", "reason": "AWS managed policy granting unrestricted account access" },
+  "ci-deploy-bot": { "sensitivity": "LOW", "reason": "CI/CD service account for automated deploys" },
+  "readonly-analytics-role": { "sensitivity": "LOW", "reason": "Read-only access to anonymized analytics data, no PII" }
+}

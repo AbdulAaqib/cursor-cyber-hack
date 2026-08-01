@@ -1,0 +1,20 @@
+[
+  {
+    "id": "SNYK-2026-001",
+    "package": "log-utils-lite@1.2.3",
+    "cve": "CVE-2026-11001",
+    "cvss": 6.5,
+    "affectedNode": "lambda-log-processor",
+    "repoPath": "lambda-log-processor",
+    "description": "Deserialization vulnerability allowing remote code execution via crafted log input"
+  },
+  {
+    "id": "SNYK-2026-002",
+    "package": "string-pad-utility@0.0.9",
+    "cve": "CVE-2026-11002",
+    "cvss": 9.1,
+    "affectedNode": "ci-deploy-bot",
+    "repoPath": "ci-deploy-bot",
+    "description": "Prototype pollution vulnerability in string padding utility"
+  }
+]
