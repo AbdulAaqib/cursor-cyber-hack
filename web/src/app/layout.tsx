@@ -16,7 +16,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Exposure Reasoning Agent",
+  title: "Lighthouse",
   description:
     "An AI agent that fuses code reachability, AWS IAM blast-radius, and vulnerability capability into a holistic severity verdict.",
   icons: {
@@ -34,7 +34,7 @@ export default function RootLayout({
       lang="en"
       className={`${plexSans.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-[#0A0E14] text-[#E4E9F0] font-sans">
+      <body className="min-h-full flex flex-col bg-[#F7F9FC] text-[#10182B] font-sans">
         <Nav />
         {children}
       </body>

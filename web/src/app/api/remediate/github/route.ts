@@ -13,9 +13,9 @@ export async function POST(request: Request) {
 
   const { findingId } = body;
 
-  if (findingId !== 'SNYK-2026-001' && findingId !== 'SNYK-2026-002') {
+  if (findingId !== 'SNYK-2026-001' && findingId !== 'SNYK-2026-002' && findingId !== 'SNYK-2026-003') {
     return new Response(
-      JSON.stringify({ ok: false, error: 'findingId must be "SNYK-2026-001" or "SNYK-2026-002"' }),
+      JSON.stringify({ ok: false, error: 'findingId must be "SNYK-2026-001", "SNYK-2026-002", or "SNYK-2026-003"' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } },
     );
   }

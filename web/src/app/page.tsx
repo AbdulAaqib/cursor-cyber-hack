@@ -67,6 +67,80 @@ const VERDICT_BADGE: Record<string, string> = {
   LOW: 'bg-low/15 border-low text-low',
 };
 
+function LighthouseBeacon() {
+  const reduced = useReducedMotion();
+
+  return (
+    <div className="relative w-32 h-32 md:w-40 md:h-40 flex-shrink-0">
+      <svg
+        viewBox="0 0 100 100"
+        className="w-full h-full"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <defs>
+          <radialGradient id="beamGlow" cx="0.5" cy="0.5" r="0.5">
+            <stop offset="0%" stopColor="#E89B2E" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#E89B2E" stopOpacity="0" />
+          </radialGradient>
+          <linearGradient id="beamGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#E89B2E" stopOpacity="0.45" />
+            <stop offset="100%" stopColor="#E89B2E" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        {/* Ambient glow behind lantern */}
+        <circle cx="50" cy="22" r="16" fill="url(#beamGlow)" opacity="0.6" />
+
+        {/* Sweeping beam */}
+        {!reduced && (
+          <motion.g
+            style={{ originX: '50px', originY: '22px' }}
+            animate={{ rotate: [-25, 25, -25] }}
+            transition={{
+              duration: 5,
+              repeat: Infinity,
+              ease: 'easeInOut',
+            }}
+          >
+            <path
+              d="M 50 22 L 95 5 L 95 39 Z"
+              fill="url(#beamGradient)"
+              opacity="0.5"
+            />
+          </motion.g>
+        )}
+        {reduced && (
+          <path
+            d="M 50 22 L 95 5 L 95 39 Z"
+            fill="url(#beamGradient)"
+            opacity="0.3"
+          />
+        )}
+
+        {/* Tower base */}
+        <rect x="38" y="78" width="24" height="6" rx="1.5" fill="#10182B" />
+
+        {/* Tower body, tapered, striped */}
+        <path
+          d="M 44 28 L 56 28 L 60 78 L 40 78 Z"
+          fill="#FFFFFF"
+          stroke="#10182B"
+          strokeWidth="1.2"
+        />
+        <path d="M 43 38 L 57 38 L 58 46 L 42 46 Z" fill="#D93B4A" />
+        <path d="M 41 56 L 59 56 L 60 64 L 40 64 Z" fill="#D93B4A" />
+
+        {/* Roof */}
+        <path d="M 40 28 L 50 20 L 60 28 Z" fill="#10182B" />
+
+        {/* Lantern room */}
+        <rect x="43" y="20" width="14" height="8" rx="1" fill="#10182B" />
+        <circle cx="50" cy="24" r="3" fill="#E89B2E" />
+      </svg>
+    </div>
+  );
+}
+
 export default function HomePage() {
   const reduced = useReducedMotion();
 
@@ -112,35 +186,41 @@ export default function HomePage() {
             variants={heroContainer}
             initial="hidden"
             animate="visible"
+            className="flex flex-col md:flex-row md:items-center md:gap-10"
           >
-            <motion.h1
-              variants={heroItem}
-              className="font-mono text-2xl md:text-4xl font-bold tracking-tight leading-tight mb-4"
-            >
-              CVSS tells you a vulnerability exists.
-              <br />
-              <span className="text-accent">This tells you what happens if it&apos;s exploited.</span>
-            </motion.h1>
-            <motion.p
-              variants={heroItem}
-              className="text-muted font-mono text-sm md:text-base mb-8 max-w-2xl"
-            >
-              The average enterprise employee holds ~96,000 permissions. No human traces
-              reachability across a graph that large by hand.
-            </motion.p>
-            <motion.div variants={heroItem} className="flex flex-wrap gap-3">
-              <Link
-                href="/console"
-                className="rounded bg-accent px-5 py-2.5 font-mono text-xs font-semibold text-[#0A0E14] transition-opacity hover:opacity-90"
+            <div className="flex-1">
+              <motion.h1
+                variants={heroItem}
+                className="font-mono text-2xl md:text-4xl font-bold tracking-tight leading-tight mb-4"
               >
-                Launch Console
-              </Link>
-              <Link
-                href="/workflows"
-                className="rounded border border-border-hairline bg-panel px-5 py-2.5 font-mono text-xs font-semibold text-foreground transition-opacity hover:opacity-80"
+                CVSS tells you a vulnerability exists.
+                <br />
+                <span className="text-accent">This tells you what happens if it&apos;s exploited.</span>
+              </motion.h1>
+              <motion.p
+                variants={heroItem}
+                className="text-muted font-mono text-sm md:text-base mb-8 max-w-2xl"
               >
-                View Workflows
-              </Link>
+                The average enterprise employee holds ~96,000 permissions. No human traces
+                reachability across a graph that large by hand.
+              </motion.p>
+              <motion.div variants={heroItem} className="flex flex-wrap gap-3">
+                <Link
+                  href="/console"
+                  className="rounded bg-accent px-5 py-2.5 font-mono text-xs font-semibold text-[#10182B] transition-opacity hover:opacity-90"
+                >
+                  Launch Console
+                </Link>
+                <Link
+                  href="/workflows"
+                  className="rounded border border-border-hairline bg-panel px-5 py-2.5 font-mono text-xs font-semibold text-foreground transition-opacity hover:opacity-80"
+                >
+                  View Workflows
+                </Link>
+              </motion.div>
+            </div>
+            <motion.div variants={heroItem} className="mt-8 md:mt-0 flex justify-center md:justify-end">
+              <LighthouseBeacon />
             </motion.div>
           </motion.div>
         </div>

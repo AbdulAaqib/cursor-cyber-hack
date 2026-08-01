@@ -1,13 +1,25 @@
 <svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-  <rect width="64" height="64" rx="8" fill="#0A0E14"/>
-  <rect x="1" y="1" width="62" height="62" rx="7" fill="none" stroke="#1E2733" stroke-width="1"/>
+  <rect width="64" height="64" rx="8" fill="#F7F9FC"/>
+  <rect x="1" y="1" width="62" height="62" rx="7" fill="none" stroke="#DDE3EC" stroke-width="1"/>
 
-  <!-- trace path: patient-zero -> hop -> critical, the product's own function as its mark -->
-  <line x1="14" y1="46" x2="30" y2="30" stroke="#22D3C7" stroke-width="2"/>
-  <line x1="30" y1="30" x2="48" y2="18" stroke="#F0465A" stroke-width="2"/>
+  <!-- beacon glow -->
+  <circle cx="32" cy="16" r="11" fill="#F0A93C" opacity="0.18"/>
 
-  <circle cx="14" cy="46" r="5" fill="#0A0E14" stroke="#22D3C7" stroke-width="2"/>
-  <circle cx="30" cy="30" r="5" fill="#0A0E14" stroke="#22D3C7" stroke-width="2"/>
-  <circle cx="48" cy="18" r="6" fill="#0A0E14" stroke="#F0465A" stroke-width="2.5"/>
-  <circle cx="48" cy="18" r="2" fill="#F0465A"/>
+  <!-- beam -->
+  <path d="M 32 16 L 54 8 L 54 12 L 34 18 Z" fill="#F0A93C" opacity="0.35"/>
+
+  <!-- lantern room -->
+  <rect x="27" y="10" width="10" height="8" rx="1" fill="#10182B"/>
+  <circle cx="32" cy="14" r="2.4" fill="#F0A93C"/>
+
+  <!-- roof -->
+  <path d="M 25 10 L 32 5 L 39 10 Z" fill="#10182B"/>
+
+  <!-- tower, tapered, striped -->
+  <path d="M 29 18 L 35 18 L 38 50 L 26 50 Z" fill="#FFFFFF" stroke="#10182B" stroke-width="1.5"/>
+  <path d="M 28.4 25 L 35.6 25 L 36.4 32 L 27.6 32 Z" fill="#D93B4A"/>
+  <path d="M 27 39 L 37 39 L 37.8 46 L 26.2 46 Z" fill="#D93B4A"/>
+
+  <!-- base -->
+  <rect x="23" y="50" width="18" height="5" rx="1" fill="#10182B"/>
 </svg>

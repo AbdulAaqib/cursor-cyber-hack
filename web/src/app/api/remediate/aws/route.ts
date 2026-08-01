@@ -1,4 +1,8 @@
-import { detachAdminPolicy, reattachAdminPolicy } from '@/lib/aws-remediation';
+import {
+  AWS_REMEDIATION_TARGETS,
+  detachPolicy,
+  reattachPolicy,
+} from '@/lib/aws-remediation';
 
 export async function POST(request: Request) {
   if (process.env.USE_LIVE_AWS !== 'true') {
@@ -8,7 +12,7 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { action?: string };
+  let body: { action?: string; findingId?: string };
   try {
     body = await request.json();
   } catch {
@@ -18,11 +22,18 @@ export async function POST(request: Request) {
     );
   }
 
-  const { action } = body;
+  const { action, findingId } = body;
 
   if (action !== 'detach' && action !== 'reattach') {
     return new Response(
       JSON.stringify({ ok: false, error: 'action must be "detach" or "reattach"' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  if (!findingId || !AWS_REMEDIATION_TARGETS[findingId]) {
+    return new Response(
+      JSON.stringify({ ok: false, error: `findingId must be one of ${Object.keys(AWS_REMEDIATION_TARGETS).join(', ')}` }),
       { status: 400, headers: { 'Content-Type': 'application/json' } },
     );
   }
@@ -40,8 +51,8 @@ export async function POST(request: Request) {
       try {
         const result =
           action === 'detach'
-            ? await detachAdminPolicy((line) => send({ type: 'log', message: line }))
-            : await reattachAdminPolicy((line) => send({ type: 'log', message: line }));
+            ? await detachPolicy(findingId, (line) => send({ type: 'log', message: line }))
+            : await reattachPolicy(findingId, (line) => send({ type: 'log', message: line }));
         send({ type: 'done', ok: true, ...result });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

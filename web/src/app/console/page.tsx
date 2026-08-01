@@ -14,6 +14,7 @@ import {
   MarkerType,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import ReactMarkdown from 'react-markdown';
 
 interface Finding {
   id: string;
@@ -40,13 +41,16 @@ interface Verdict {
   codeReachabilityReason: string;
 }
 
-type RemediationMode = 'aws' | 'github' | null;
-
-interface RemediationResult {
-  type: 'success' | 'error';
+interface RemediationOutcome {
+  ok: boolean;
   message: string;
-  prUrl?: string;
   undoable?: boolean;
+  prUrl?: string;
+}
+
+interface CombinedRemediationResult {
+  aws?: RemediationOutcome;
+  github?: RemediationOutcome;
 }
 
 const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
@@ -62,12 +66,27 @@ const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
   CustomerPaymentsDataAccess: { x: 1000, y: 500 },
 };
 
+const FINDING_CHAINS: Record<string, { nodes: string[]; edgeIds: string[] }> = {
+  'SNYK-2026-001': {
+    nodes: ['lambda-log-processor', 'data-processor-role', 'admin-deploy-role', 'AdministratorAccess'],
+    edgeIds: ['e1', 'e2', 'e3'],
+  },
+  'SNYK-2026-002': {
+    nodes: ['ci-deploy-bot', 'readonly-analytics-role'],
+    edgeIds: ['e4'],
+  },
+  'SNYK-2026-003': {
+    nodes: ['api-gateway-service', 'secrets-sync-role', 'payments-data-role', 'CustomerPaymentsDataAccess'],
+    edgeIds: ['e5', 'e6', 'e7'],
+  },
+};
+
 const SEVERITY_COLORS: Record<string, string> = {
-  CRITICAL: '#f0465a',
-  HIGH: '#f5943b',
-  MEDIUM: '#f0c43b',
-  LOW: '#3ecf8e',
-  UNKNOWN: '#6b7686',
+  CRITICAL: '#D93B4A',
+  HIGH: '#E07C2E',
+  MEDIUM: '#C99A1E',
+  LOW: '#2E9E6B',
+  UNKNOWN: '#5B6478',
 };
 
 function CustomNode({
@@ -75,16 +94,16 @@ function CustomNode({
 }: {
   data: { label: string; sensitivity?: string; visited?: boolean; active?: boolean };
 }) {
-  const color = data.visited ? SEVERITY_COLORS[data.sensitivity ?? 'UNKNOWN'] : '#3a4453';
+  const color = data.visited ? SEVERITY_COLORS[data.sensitivity ?? 'UNKNOWN'] : '#B0B8C9';
   return (
     <div
       className={`rounded border px-3 py-2 font-mono text-xs transition-colors duration-500 ${
         data.active ? 'animate-pulse-glow' : ''
       }`}
       style={{
-        borderColor: data.active ? '#22d3c7' : color,
-        backgroundColor: data.visited ? '#121821' : '#0d131b',
-        color: data.visited ? '#e4e9f0' : '#4b5566',
+        borderColor: data.active ? '#E89B2E' : color,
+        backgroundColor: data.visited ? '#FFFFFF' : '#E8ECF4',
+        color: data.visited ? '#10182B' : '#5B6478',
       }}
     >
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
@@ -109,10 +128,10 @@ const SEVERITY_BADGE: Record<string, string> = {
 };
 
 const VERDICT_GLOW: Record<string, { spread: string; color: string }> = {
-  CRITICAL: { spread: '0 0 32px 8px', color: 'rgba(240, 70, 90, 0.60)' },
-  HIGH: { spread: '0 0 28px 6px', color: 'rgba(245, 148, 59, 0.55)' },
-  MEDIUM: { spread: '0 0 24px 5px', color: 'rgba(240, 196, 59, 0.50)' },
-  LOW: { spread: '0 0 20px 4px', color: 'rgba(62, 207, 142, 0.45)' },
+  CRITICAL: { spread: '0 0 32px 8px', color: 'rgba(217, 59, 74, 0.60)' },
+  HIGH: { spread: '0 0 28px 6px', color: 'rgba(224, 124, 46, 0.55)' },
+  MEDIUM: { spread: '0 0 24px 5px', color: 'rgba(201, 154, 30, 0.50)' },
+  LOW: { spread: '0 0 20px 4px', color: 'rgba(46, 158, 107, 0.45)' },
 };
 
 const GITHUB_PREVIEW: Record<string, string> = {
@@ -123,6 +142,63 @@ const GITHUB_PREVIEW: Record<string, string> = {
   'SNYK-2026-003':
     'Add URL validation to `fetchExternal` to block internal/link-local IP ranges (e.g. 169.254.169.254) and restrict requests to an allow-list of approved external domains.',
 };
+
+// Client-side mirror of the AWS target map for display / filtering
+const AWS_TARGET_DISPLAY: Record<string, { roleName: string; policyArn: string; policyLabel: string }> = {
+  'SNYK-2026-001': {
+    roleName: 'admin-deploy-role',
+    policyArn: 'arn:aws:iam::aws:policy/AdministratorAccess',
+    policyLabel: 'AdministratorAccess',
+  },
+  'SNYK-2026-003': {
+    roleName: 'payments-data-role',
+    policyArn: 'arn:aws:iam::110480666916:policy/CustomerPaymentsDataAccess',
+    policyLabel: 'CustomerPaymentsDataAccess',
+  },
+};
+
+async function readSSELogs(
+  res: Response,
+  onLog: (msg: string) => void,
+): Promise<{ ok: boolean; error?: string; prUrl?: string }> {
+  if (!res.body) {
+    return { ok: false, error: 'No response body' };
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalResult: { ok: boolean; error?: string; prUrl?: string } = { ok: false, error: 'Stream ended without done event' };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop() ?? '';
+    for (const part of parts) {
+      const line = part.trim();
+      if (!line.startsWith('data: ')) continue;
+      const jsonStr = line.slice(6);
+      try {
+        const event = JSON.parse(jsonStr);
+        if (event.type === 'log') {
+          onLog(event.message);
+        }
+        if (event.type === 'done') {
+          finalResult = {
+            ok: event.ok,
+            error: event.error,
+            prUrl: event.prUrl,
+          };
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }
+  }
+
+  return finalResult;
+}
 
 function ConsolePageInner() {
   const reduced = useReducedMotion();
@@ -138,11 +214,11 @@ function ConsolePageInner() {
   const reasoningRef = useRef<HTMLDivElement>(null);
 
   // Remediation state
-  const [remediationMode, setRemediationMode] = useState<RemediationMode>(null);
+  const [remediationPreviewOpen, setRemediationPreviewOpen] = useState(false);
   const [remediationLoading, setRemediationLoading] = useState(false);
-  const [remediationResult, setRemediationResult] = useState<RemediationResult | null>(null);
+  const [remediationResult, setRemediationResult] = useState<CombinedRemediationResult | null>(null);
   const [remediationLogs, setRemediationLogs] = useState<string[]>([]);
-  const [activeRemediationAction, setActiveRemediationAction] = useState<'aws' | 'github' | null>(null);
+  const [awsActionFindingId, setAwsActionFindingId] = useState<string | null>(null);
   const logsRef = useRef<HTMLDivElement>(null);
 
   const searchParams = useSearchParams();
@@ -173,8 +249,10 @@ function ConsolePageInner() {
     }
   }, [remediationLogs]);
 
+  const activeChain = selectedFindingId ? FINDING_CHAINS[selectedFindingId] : undefined;
+
   const nodes: Node[] = useMemo(() => {
-    const allNodes = Object.keys(NODE_POSITIONS);
+    const allNodes = activeChain ? activeChain.nodes : Object.keys(NODE_POSITIONS);
     return allNodes.map((id) => ({
       id,
       type: 'custom',
@@ -186,10 +264,10 @@ function ConsolePageInner() {
         active: activeNode === id,
       },
     }));
-  }, [visitedNodes, nodeSensitivities, activeNode]);
+  }, [visitedNodes, nodeSensitivities, activeNode, activeChain]);
 
   const edges: Edge[] = useMemo(() => {
-    const baseEdges = [
+    const allEdges = [
       { id: 'e1', source: 'lambda-log-processor', target: 'data-processor-role', label: 'AssumeRole' },
       { id: 'e2', source: 'data-processor-role', target: 'admin-deploy-role', label: 'PassRole' },
       { id: 'e3', source: 'admin-deploy-role', target: 'AdministratorAccess', label: 'AttachRolePolicy' },
@@ -198,27 +276,30 @@ function ConsolePageInner() {
       { id: 'e6', source: 'secrets-sync-role', target: 'payments-data-role', label: 'AssumeRole' },
       { id: 'e7', source: 'payments-data-role', target: 'CustomerPaymentsDataAccess', label: 'AttachRolePolicy' },
     ];
+    const baseEdges = activeChain
+      ? allEdges.filter((e) => activeChain.edgeIds.includes(e.id))
+      : allEdges;
     return baseEdges.map((e) => ({
       ...e,
       animated: knownEdges.has(e.id),
       style: {
-        stroke: knownEdges.has(e.id) ? '#22d3c7' : '#242e3c',
+        stroke: knownEdges.has(e.id) ? '#E89B2E' : '#B0B8C9',
         strokeWidth: knownEdges.has(e.id) ? 2 : 1,
         transition: 'all 0.5s',
       },
       labelStyle: {
-        fill: knownEdges.has(e.id) ? '#e4e9f0' : '#4b5566',
+        fill: knownEdges.has(e.id) ? '#10182B' : '#5B6478',
         fontSize: 11,
         fontFamily: 'var(--font-mono)',
         fontWeight: knownEdges.has(e.id) ? 600 : 400,
       },
-      labelBgStyle: { fill: '#0a0e14', fillOpacity: 0.85 },
+      labelBgStyle: { fill: '#F7F9FC', fillOpacity: 0.85 },
       markerEnd: {
         type: MarkerType.ArrowClosed,
-        color: knownEdges.has(e.id) ? '#22d3c7' : '#242e3c',
+        color: knownEdges.has(e.id) ? '#E89B2E' : '#B0B8C9',
       },
     }));
-  }, [knownEdges]);
+  }, [knownEdges, activeChain]);
 
   const handleInvestigate = useCallback(async () => {
     if (!selectedFindingId) return;
@@ -229,11 +310,10 @@ function ConsolePageInner() {
     setKnownEdges(new Set());
     setNodeSensitivities({});
     setActiveNode(null);
-    setRemediationMode(null);
+    setRemediationPreviewOpen(false);
     setRemediationResult(null);
-    setRemediationLoading(false);
     setRemediationLogs([]);
-    setActiveRemediationAction(null);
+    setAwsActionFindingId(null);
 
     const res = await fetch('/api/investigate', {
       method: 'POST',
@@ -322,132 +402,91 @@ function ConsolePageInner() {
     setActiveNode(null);
   }, [selectedFindingId]);
 
-  const handleAwsRemediate = useCallback(
-    async (action: 'detach' | 'reattach') => {
-      setRemediationLoading(true);
-      setRemediationResult(null);
-      setRemediationLogs([]);
-      setActiveRemediationAction('aws');
+  const selectedFinding = findings.find((f) => f.id === selectedFindingId);
+  const activeAwsTarget = selectedFindingId ? AWS_TARGET_DISPLAY[selectedFindingId] : undefined;
+  const showAwsAction =
+    verdict &&
+    (verdict.severity === 'CRITICAL' || verdict.severity === 'HIGH') &&
+    activeAwsTarget !== undefined;
 
-      const res = await fetch('/api/remediate/aws', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      });
-
-      if (!res.body) {
-        setRemediationLoading(false);
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split('\n\n');
-        buffer = parts.pop() ?? '';
-        for (const part of parts) {
-          const line = part.trim();
-          if (!line.startsWith('data: ')) continue;
-          const jsonStr = line.slice(6);
-          try {
-            const event = JSON.parse(jsonStr);
-            if (event.type === 'log') {
-              setRemediationLogs((prev) => [...prev, event.message]);
-            }
-            if (event.type === 'done') {
-              if (event.ok) {
-                setRemediationResult({
-                  type: 'success',
-                  message:
-                    action === 'detach'
-                      ? 'AdministratorAccess detached from admin-deploy-role'
-                      : 'AdministratorAccess re-attached to admin-deploy-role',
-                  undoable: action === 'detach',
-                });
-              } else {
-                setRemediationResult({
-                  type: 'error',
-                  message: event.error ?? 'Unknown error',
-                });
-              }
-            }
-          } catch {
-            // ignore parse errors
-          }
-        }
-      }
-
-      setRemediationLoading(false);
-    },
-    [],
-  );
-
-  const handleGithubRemediate = useCallback(async () => {
+  const handleConfirmRemediation = useCallback(async () => {
     setRemediationLoading(true);
     setRemediationResult(null);
     setRemediationLogs([]);
-    setActiveRemediationAction('github');
+    setAwsActionFindingId(null);
 
-    const res = await fetch('/api/remediate/github', {
+    const result: CombinedRemediationResult = {};
+    const addLog = (prefix: string, msg: string) => {
+      setRemediationLogs((prev) => [...prev, `[${prefix}] ${msg}`]);
+    };
+
+    if (showAwsAction && activeAwsTarget) {
+      const awsRes = await fetch('/api/remediate/aws', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'detach', findingId: selectedFindingId }),
+      });
+      const awsResult = await readSSELogs(awsRes, (msg) => addLog('AWS', msg));
+      if (awsResult.ok) {
+        setAwsActionFindingId(selectedFindingId);
+        result.aws = {
+          ok: true,
+          message: `${activeAwsTarget.policyLabel} detached from ${activeAwsTarget.roleName}`,
+          undoable: true,
+        };
+      } else {
+        result.aws = { ok: false, message: awsResult.error ?? 'Unknown error' };
+      }
+    }
+
+    const githubRes = await fetch('/api/remediate/github', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ findingId: selectedFindingId }),
     });
-
-    if (!res.body) {
-      setRemediationLoading(false);
-      return;
+    const githubResult = await readSSELogs(githubRes, (msg) => addLog('GitHub', msg));
+    if (githubResult.ok && githubResult.prUrl) {
+      result.github = {
+        ok: true,
+        message: 'Pull request opened successfully',
+        prUrl: githubResult.prUrl,
+      };
+    } else {
+      result.github = { ok: false, message: githubResult.error ?? 'Unknown error' };
     }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split('\n\n');
-      buffer = parts.pop() ?? '';
-      for (const part of parts) {
-        const line = part.trim();
-        if (!line.startsWith('data: ')) continue;
-        const jsonStr = line.slice(6);
-        try {
-          const event = JSON.parse(jsonStr);
-          if (event.type === 'log') {
-            setRemediationLogs((prev) => [...prev, event.message]);
-          }
-          if (event.type === 'done') {
-            if (event.ok && event.prUrl) {
-              setRemediationResult({
-                type: 'success',
-                message: 'Pull request opened successfully',
-                prUrl: event.prUrl,
-              });
-            } else {
-              setRemediationResult({
-                type: 'error',
-                message: event.error ?? 'Unknown error',
-              });
-            }
-          }
-        } catch {
-          // ignore parse errors
-        }
-      }
-    }
-
+    setRemediationResult(result);
     setRemediationLoading(false);
-  }, [selectedFindingId]);
+  }, [selectedFindingId, showAwsAction, activeAwsTarget]);
 
-  const selectedFinding = findings.find((f) => f.id === selectedFindingId);
-  const showAwsAction = verdict && (verdict.severity === 'CRITICAL' || verdict.severity === 'HIGH');
+  const handleUndoAws = useCallback(async () => {
+    setRemediationLoading(true);
+    const addLog = (prefix: string, msg: string) => {
+      setRemediationLogs((prev) => [...prev, `[${prefix}] ${msg}`]);
+    };
+
+    const targetFindingId = awsActionFindingId ?? selectedFindingId;
+    const target = targetFindingId ? AWS_TARGET_DISPLAY[targetFindingId] : undefined;
+
+    const res = await fetch('/api/remediate/aws', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'reattach', findingId: targetFindingId }),
+    });
+    const result = await readSSELogs(res, (msg) => addLog('AWS', msg));
+    setRemediationResult((prev) => {
+      if (!prev) return prev;
+      const label = target?.policyLabel ?? 'policy';
+      const role = target?.roleName ?? 'role';
+      return {
+        ...prev,
+        aws: result.ok
+          ? { ok: true, message: `${label} re-attached to ${role}`, undoable: false }
+          : { ok: false, message: result.error ?? 'Unknown error' },
+      };
+    });
+    setRemediationLoading(false);
+  }, [awsActionFindingId, selectedFindingId]);
 
   return (
     <div className="flex flex-col h-[calc(100vh-48px)] bg-background text-foreground font-sans">
@@ -473,12 +512,17 @@ function ConsolePageInner() {
         </label>
         <select
           className="rounded border border-border-hairline bg-panel px-3 py-1.5 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+          style={{ backgroundColor: 'var(--panel)', color: 'var(--foreground)' }}
           value={selectedFindingId}
           onChange={(e) => setSelectedFindingId(e.target.value)}
           disabled={investigating}
         >
           {findings.map((f) => (
-            <option key={f.id} value={f.id}>
+            <option
+              key={f.id}
+              value={f.id}
+              style={{ backgroundColor: 'var(--panel)', color: 'var(--foreground)' }}
+            >
               {f.id} -- {f.package} (CVSS {f.cvss})
             </option>
           ))}
@@ -491,7 +535,7 @@ function ConsolePageInner() {
         <button
           onClick={handleInvestigate}
           disabled={investigating || !selectedFindingId}
-          className="rounded bg-accent px-4 py-1.5 font-mono text-xs font-semibold text-[#0A0E14] transition-opacity hover:opacity-90 disabled:opacity-40 sm:ml-auto w-full sm:w-auto mt-2 sm:mt-0"
+          className="rounded bg-accent px-4 py-1.5 font-mono text-xs font-semibold text-[#10182B] transition-opacity hover:opacity-90 disabled:opacity-40 sm:ml-auto w-full sm:w-auto mt-2 sm:mt-0"
         >
           {investigating ? 'INVESTIGATING...' : 'INVESTIGATE'}
         </button>
@@ -507,7 +551,7 @@ function ConsolePageInner() {
             attributionPosition="bottom-left"
             proOptions={{ hideAttribution: false }}
           >
-            <Background gap={18} size={1} color="#161d28" />
+            <Background gap={18} size={1} color="#E3E8F0" />
             <Controls className="[&>button]:!bg-panel [&>button]:!border-border-hairline [&>button]:!fill-foreground" />
           </ReactFlow>
         </div>
@@ -520,11 +564,26 @@ function ConsolePageInner() {
           </div>
           <div
             ref={reasoningRef}
-            className="console-scroll flex-1 overflow-auto p-4 font-mono text-[12px] leading-relaxed text-foreground/90 whitespace-pre-wrap"
+            className="console-scroll flex-1 overflow-auto p-4 font-mono text-[12px] leading-relaxed text-foreground/90"
           >
             {reasoning ? (
               <>
-                {reasoning}
+                <ReactMarkdown
+                  components={{
+                    h1: ({ children }) => <h1 className="text-[13px] font-bold mb-1 mt-2">{children}</h1>,
+                    h2: ({ children }) => <h2 className="text-[12px] font-bold mb-1 mt-2">{children}</h2>,
+                    h3: ({ children }) => <h3 className="text-[11px] font-bold mb-1 mt-1.5">{children}</h3>,
+                    p: ({ children }) => <p className="mb-1.5">{children}</p>,
+                    ul: ({ children }) => <ul className="list-disc pl-4 mb-1.5">{children}</ul>,
+                    ol: ({ children }) => <ol className="list-decimal pl-4 mb-1.5">{children}</ol>,
+                    li: ({ children }) => <li className="mb-0.5">{children}</li>,
+                    strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+                    code: ({ children }) => <code className="bg-border-hairline/30 rounded px-1 py-0.5 text-[11px]">{children}</code>,
+                    pre: ({ children }) => <pre className="bg-border-hairline/20 rounded p-2 mb-1.5 overflow-auto">{children}</pre>,
+                  }}
+                >
+                  {reasoning}
+                </ReactMarkdown>
                 {investigating && <span className="cursor-blink" />}
               </>
             ) : (
@@ -638,102 +697,91 @@ function ConsolePageInner() {
                 </span>
               </div>
 
-              {/* Action buttons (stage 1) */}
-              {remediationMode === null && !remediationResult && (
+              {/* Action button (stage 1) */}
+              {!remediationPreviewOpen && !remediationResult && (
                 <div className="space-y-2">
-                  {showAwsAction && (
-                    <button
-                      onClick={() => {
-                        setRemediationMode('aws');
-                        setRemediationResult(null);
-                        setRemediationLogs([]);
-                        setActiveRemediationAction(null);
-                      }}
-                      disabled={investigating}
-                      className="w-full rounded border border-critical/40 bg-critical/10 px-3 py-2 font-mono text-xs font-semibold text-critical transition-opacity hover:opacity-80 disabled:opacity-40"
-                    >
-                      PREPARE AWS FIX -- DETACH ADMIN POLICY
-                    </button>
-                  )}
                   <button
                     onClick={() => {
-                      setRemediationMode('github');
+                      setRemediationPreviewOpen(true);
                       setRemediationResult(null);
                       setRemediationLogs([]);
-                      setActiveRemediationAction(null);
                     }}
                     disabled={investigating}
                     className="w-full rounded border border-accent/40 bg-accent/10 px-3 py-2 font-mono text-xs font-semibold text-accent transition-opacity hover:opacity-80 disabled:opacity-40"
                   >
-                    PREPARE GITHUB FIX -- OPEN PR
+                    PREPARE REMEDIATION
                   </button>
                 </div>
               )}
 
               {/* Preview panel (stage 2) */}
-              {remediationMode !== null && !remediationResult && (
+              {remediationPreviewOpen && !remediationResult && (
                 <div className="space-y-3">
                   <div className="rounded border border-border-hairline bg-background p-3">
                     <div className="text-[10px] font-mono font-semibold uppercase tracking-wider text-muted mb-2">
                       Preview
                     </div>
-                    {remediationMode === 'aws' && (
-                      <div className="space-y-2">
-                        <p className="text-xs text-foreground/90">
-                          This will detach{' '}
-                          <code className="font-mono text-accent">
-                            arn:aws:iam::aws:policy/AdministratorAccess
-                          </code>{' '}
-                          from role{' '}
-                          <code className="font-mono text-accent">admin-deploy-role</code> in your
-                          AWS account.
-                        </p>
-                        <p className="text-[11px] text-muted">
-                          You can re-attach it immediately afterward if needed.
-                        </p>
+                    <div className="space-y-2">
+                      {showAwsAction && activeAwsTarget && (
+                        <div className="flex items-start gap-2">
+                          <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-critical shrink-0" />
+                          <div>
+                            <p className="text-xs text-foreground/90 font-semibold">
+                              Step 1: Detach {activeAwsTarget.policyLabel}
+                            </p>
+                            <p className="text-xs text-foreground/90">
+                              Detach{' '}
+                              <code className="font-mono text-accent">
+                                {activeAwsTarget.policyArn}
+                              </code>{' '}
+                              from role{' '}
+                              <code className="font-mono text-accent">{activeAwsTarget.roleName}</code>.
+                            </p>
+                            <p className="text-[11px] text-muted">
+                              You can re-attach it immediately afterward if needed.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex items-start gap-2">
+                        <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-accent shrink-0" />
+                        <div>
+                          <p className="text-xs text-foreground/90 font-semibold">
+                            {showAwsAction ? 'Step 2: Open a GitHub PR' : 'Step 1: Open a GitHub PR'}
+                          </p>
+                          <p className="text-xs text-foreground/90">
+                            Open a new pull request on{' '}
+                            <code className="font-mono text-accent">
+                              {process.env.NEXT_PUBLIC_GITHUB_REPO ?? 'this repository'}
+                            </code>{' '}
+                            with the following fix:
+                          </p>
+                          <p className="text-xs text-foreground/80 border-l-2 border-accent/40 pl-2 mt-1">
+                            {GITHUB_PREVIEW[selectedFindingId] ?? 'Custom fix for this finding.'}
+                          </p>
+                          <p className="text-[11px] text-muted">
+                            The PR will <strong>not</strong> auto-merge. A human must review and merge it manually.
+                          </p>
+                        </div>
                       </div>
-                    )}
-                    {remediationMode === 'github' && (
-                      <div className="space-y-2">
-                        <p className="text-xs text-foreground/90">
-                          This will open a new pull request on{' '}
-                          <code className="font-mono text-accent">{process.env.NEXT_PUBLIC_GITHUB_REPO ?? 'this repository'}</code>{' '}
-                          with the following fix:
-                        </p>
-                        <p className="text-xs text-foreground/80 border-l-2 border-accent/40 pl-2">
-                          {GITHUB_PREVIEW[selectedFindingId] ?? 'Custom fix for this finding.'}
-                        </p>
-                        <p className="text-[11px] text-muted">
-                          The PR will <strong>not</strong> auto-merge. A human must review and merge it manually.
-                        </p>
-                      </div>
-                    )}
+                    </div>
                   </div>
 
                   <div className="flex gap-2">
                     <button
                       onClick={() => {
-                        if (remediationMode === 'aws') {
-                          void handleAwsRemediate('detach');
-                        } else {
-                          void handleGithubRemediate();
-                        }
+                        void handleConfirmRemediation();
                       }}
                       disabled={remediationLoading}
-                      className="flex-1 rounded bg-accent px-3 py-2 font-mono text-xs font-semibold text-[#0A0E14] transition-opacity hover:opacity-90 disabled:opacity-40"
+                      className="flex-1 rounded bg-accent px-3 py-2 font-mono text-xs font-semibold text-[#10182B] transition-opacity hover:opacity-90 disabled:opacity-40"
                     >
-                      {remediationLoading
-                        ? 'APPLYING...'
-                        : remediationMode === 'aws'
-                          ? 'CONFIRM & DETACH'
-                          : 'CONFIRM & OPEN PR'}
+                      {remediationLoading ? 'APPLYING...' : 'CONFIRM & APPLY'}
                     </button>
                     <button
                       onClick={() => {
-                        setRemediationMode(null);
+                        setRemediationPreviewOpen(false);
                         setRemediationResult(null);
                         setRemediationLogs([]);
-                        setActiveRemediationAction(null);
                       }}
                       disabled={remediationLoading}
                       className="rounded border border-border-hairline bg-panel px-3 py-2 font-mono text-xs text-muted transition-opacity hover:opacity-80 disabled:opacity-40"
@@ -745,10 +793,10 @@ function ConsolePageInner() {
               )}
 
               {/* Live log panel */}
-              {activeRemediationAction && (remediationLoading || remediationResult) && (
+              {remediationLoading && (
                 <div className="mb-3">
                   <div className="text-[10px] font-mono font-semibold uppercase tracking-wider text-muted mb-1.5">
-                    {activeRemediationAction === 'aws' ? 'AWS Remediation Log' : 'GitHub Remediation Log'}
+                    Remediation Log
                   </div>
                   <div
                     ref={logsRef}
@@ -761,7 +809,7 @@ function ConsolePageInner() {
                         <div key={i} className="mb-0.5">{line}</div>
                       ))
                     )}
-                    {remediationLoading && <span className="cursor-blink" />}
+                    <span className="cursor-blink" />
                   </div>
                 </div>
               )}
@@ -769,37 +817,58 @@ function ConsolePageInner() {
               {/* Result state */}
               {remediationResult && (
                 <div className="space-y-3">
-                  <div
-                    className={`rounded border px-3 py-2 ${
-                      remediationResult.type === 'success'
-                        ? 'border-low/40 bg-low/10'
-                        : 'border-critical/40 bg-critical/10'
-                    }`}
-                  >
+                  {remediationResult.aws && (
                     <div
-                      className={`text-xs font-mono font-semibold ${
-                        remediationResult.type === 'success' ? 'text-low' : 'text-critical'
+                      className={`rounded border px-3 py-2 ${
+                        remediationResult.aws.ok
+                          ? 'border-low/40 bg-low/10'
+                          : 'border-critical/40 bg-critical/10'
                       }`}
                     >
-                      {remediationResult.type === 'success' ? 'SUCCESS' : 'ERROR'}
-                    </div>
-                    <p className="text-xs text-foreground/90 mt-1">{remediationResult.message}</p>
-                    {remediationResult.prUrl && (
-                      <a
-                        href={remediationResult.prUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-accent underline hover:opacity-80 mt-1 inline-block"
+                      <div
+                        className={`text-xs font-mono font-semibold ${
+                          remediationResult.aws.ok ? 'text-low' : 'text-critical'
+                        }`}
                       >
-                        {remediationResult.prUrl}
-                      </a>
-                    )}
-                  </div>
+                        {remediationResult.aws.ok ? 'AWS SUCCESS' : 'AWS ERROR'}
+                      </div>
+                      <p className="text-xs text-foreground/90 mt-1">{remediationResult.aws.message}</p>
+                    </div>
+                  )}
+
+                  {remediationResult.github && (
+                    <div
+                      className={`rounded border px-3 py-2 ${
+                        remediationResult.github.ok
+                          ? 'border-low/40 bg-low/10'
+                          : 'border-critical/40 bg-critical/10'
+                      }`}
+                    >
+                      <div
+                        className={`text-xs font-mono font-semibold ${
+                          remediationResult.github.ok ? 'text-low' : 'text-critical'
+                        }`}
+                      >
+                        {remediationResult.github.ok ? 'GITHUB SUCCESS' : 'GITHUB ERROR'}
+                      </div>
+                      <p className="text-xs text-foreground/90 mt-1">{remediationResult.github.message}</p>
+                      {remediationResult.github.prUrl && (
+                        <a
+                          href={remediationResult.github.prUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-accent underline hover:opacity-80 mt-1 inline-block"
+                        >
+                          {remediationResult.github.prUrl}
+                        </a>
+                      )}
+                    </div>
+                  )}
 
                   <div className="flex gap-2">
-                    {remediationResult.undoable && (
+                    {remediationResult.aws?.undoable && (
                       <button
-                        onClick={() => handleAwsRemediate('reattach')}
+                        onClick={() => handleUndoAws()}
                         disabled={remediationLoading}
                         className="flex-1 rounded border border-accent/40 bg-accent/10 px-3 py-2 font-mono text-xs font-semibold text-accent transition-opacity hover:opacity-80 disabled:opacity-40"
                       >
@@ -808,14 +877,13 @@ function ConsolePageInner() {
                     )}
                     <button
                       onClick={() => {
-                        setRemediationMode(null);
+                        setRemediationPreviewOpen(false);
                         setRemediationResult(null);
                         setRemediationLogs([]);
-                        setActiveRemediationAction(null);
                       }}
                       className="rounded border border-border-hairline bg-panel px-3 py-2 font-mono text-xs text-muted transition-opacity hover:opacity-80"
                     >
-                      DISMISS
+                      RUN ANOTHER
                     </button>
                   </div>
                 </div>

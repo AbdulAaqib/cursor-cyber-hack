@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="public/logo.svg" width="64" height="64" alt="Exposure Reasoning Agent logo" />
+  <img src="public/logo.svg" width="64" height="64" alt="Lighthouse logo" />
 </p>
 
-<h1 align="center">Exposure Reasoning Agent</h1>
+<h1 align="center">Lighthouse</h1>
 
 <p align="center">
 An AI agent that fuses <b>code reachability</b>, <b>real AWS IAM blast-radius</b>, and <b>vulnerability capability</b> into one holistic severity verdict — instead of ranking findings by raw CVSS score alone.

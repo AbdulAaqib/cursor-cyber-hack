@@ -17,7 +17,7 @@ export default function Nav() {
       <Link href="/" className="flex items-center gap-2.5">
         <Image src="/logo.svg" alt="" width={20} height={20} className="rounded" />
         <span className="font-mono text-xs font-semibold tracking-wide text-foreground hidden sm:inline">
-          EXPOSURE REASONING AGENT
+          LIGHTHOUSE
         </span>
       </Link>
       <div className="flex items-center gap-5">

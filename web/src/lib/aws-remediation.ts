@@ -5,8 +5,21 @@ import {
   ListAttachedRolePoliciesCommand,
 } from '@aws-sdk/client-iam';
 
-const ROLE_NAME = 'admin-deploy-role';
-const POLICY_ARN = 'arn:aws:iam::aws:policy/AdministratorAccess';
+export const AWS_REMEDIATION_TARGETS: Record<
+  string,
+  { roleName: string; policyArn: string; policyLabel: string }
+> = {
+  'SNYK-2026-001': {
+    roleName: 'admin-deploy-role',
+    policyArn: 'arn:aws:iam::aws:policy/AdministratorAccess',
+    policyLabel: 'AdministratorAccess',
+  },
+  'SNYK-2026-003': {
+    roleName: 'payments-data-role',
+    policyArn: 'arn:aws:iam::110480666916:policy/CustomerPaymentsDataAccess',
+    policyLabel: 'CustomerPaymentsDataAccess',
+  },
+};
 
 function client() {
   return new IAMClient({
@@ -18,12 +31,12 @@ function client() {
   });
 }
 
-async function isPolicyAttached(): Promise<boolean> {
+async function isPolicyAttached(roleName: string, policyArn: string): Promise<boolean> {
   const result = await client().send(
-    new ListAttachedRolePoliciesCommand({ RoleName: ROLE_NAME }),
+    new ListAttachedRolePoliciesCommand({ RoleName: roleName }),
   );
   const attached = result.AttachedPolicies ?? [];
-  return attached.some((p) => p.PolicyArn === POLICY_ARN);
+  return attached.some((p) => p.PolicyArn === policyArn);
 }
 
 export interface AwsRemediationResult {
@@ -32,78 +45,92 @@ export interface AwsRemediationResult {
   action: 'detached' | 'reattached';
 }
 
-export async function detachAdminPolicy(
+export async function detachPolicy(
+  findingId: string,
   onLog?: (line: string) => void,
 ): Promise<AwsRemediationResult> {
+  const target = AWS_REMEDIATION_TARGETS[findingId];
+  if (!target) {
+    throw new Error(`No AWS remediation target defined for finding ${findingId}`);
+  }
+  const { roleName, policyArn, policyLabel } = target;
+
   const log = (line: string) => {
     if (onLog) onLog(line);
   };
 
-  log(`Checking current policies on ${ROLE_NAME}...`);
-  const initiallyAttached = await isPolicyAttached();
+  log(`Checking current policies on ${roleName}...`);
+  const initiallyAttached = await isPolicyAttached(roleName, policyArn);
   log(
     initiallyAttached
-      ? `Found: AdministratorAccess attached`
-      : `Found: no AdministratorAccess attached`,
+      ? `Found: ${policyLabel} attached`
+      : `Found: no ${policyLabel} attached`,
   );
 
-  log(`Calling iam:DetachRolePolicy(${ROLE_NAME}, AdministratorAccess)...`);
+  log(`Calling iam:DetachRolePolicy(${roleName}, ${policyLabel})...`);
   await client().send(
-    new DetachRolePolicyCommand({ RoleName: ROLE_NAME, PolicyArn: POLICY_ARN }),
+    new DetachRolePolicyCommand({ RoleName: roleName, PolicyArn: policyArn }),
   );
   log(`AWS confirmed the API call succeeded.`);
 
   log(`Verifying new state...`);
-  const nowAttached = await isPolicyAttached();
+  const nowAttached = await isPolicyAttached(roleName, policyArn);
   if (nowAttached) {
-    log(`Confirmed: AdministratorAccess is STILL attached — unexpected!`);
+    log(`Confirmed: ${policyLabel} is STILL attached — unexpected!`);
     throw new Error(
-      `DetachRolePolicy succeeded but AdministratorAccess is still attached to ${ROLE_NAME}`,
+      `DetachRolePolicy succeeded but ${policyLabel} is still attached to ${roleName}`,
     );
   }
-  log(`Confirmed: AdministratorAccess is no longer attached.`);
+  log(`Confirmed: ${policyLabel} is no longer attached.`);
 
   return {
-    roleName: ROLE_NAME,
-    policyArn: POLICY_ARN,
+    roleName,
+    policyArn,
     action: 'detached',
   };
 }
 
-export async function reattachAdminPolicy(
+export async function reattachPolicy(
+  findingId: string,
   onLog?: (line: string) => void,
 ): Promise<AwsRemediationResult> {
+  const target = AWS_REMEDIATION_TARGETS[findingId];
+  if (!target) {
+    throw new Error(`No AWS remediation target defined for finding ${findingId}`);
+  }
+  const { roleName, policyArn, policyLabel } = target;
+
   const log = (line: string) => {
     if (onLog) onLog(line);
   };
 
-  log(`Checking current policies on ${ROLE_NAME}...`);
-  const initiallyAttached = await isPolicyAttached();
+  log(`Checking current policies on ${roleName}...`);
+  const initiallyAttached = await isPolicyAttached(roleName, policyArn);
   log(
     initiallyAttached
-      ? `Found: AdministratorAccess already attached`
-      : `Found: no AdministratorAccess attached`,
+      ? `Found: ${policyLabel} already attached`
+      : `Found: no ${policyLabel} attached`,
   );
 
-  log(`Calling iam:AttachRolePolicy(${ROLE_NAME}, AdministratorAccess)...`);
+  log(`Calling iam:AttachRolePolicy(${roleName}, ${policyLabel})...`);
   await client().send(
-    new AttachRolePolicyCommand({ RoleName: ROLE_NAME, PolicyArn: POLICY_ARN }),
+    new AttachRolePolicyCommand({ RoleName: roleName, PolicyArn: policyArn }),
   );
   log(`AWS confirmed the API call succeeded.`);
 
   log(`Verifying new state...`);
-  const nowAttached = await isPolicyAttached();
+  const nowAttached = await isPolicyAttached(roleName, policyArn);
   if (!nowAttached) {
-    log(`Confirmed: AdministratorAccess is NOT attached — unexpected!`);
+    log(`Confirmed: ${policyLabel} is NOT attached — unexpected!`);
     throw new Error(
-      `AttachRolePolicy succeeded but AdministratorAccess is not attached to ${ROLE_NAME}`,
+      `AttachRolePolicy succeeded but ${policyLabel} is not attached to ${roleName}`,
     );
   }
-  log(`Confirmed: AdministratorAccess is attached.`);
+  log(`Confirmed: ${policyLabel} is attached.`);
 
   return {
-    roleName: ROLE_NAME,
-    policyArn: POLICY_ARN,
+    roleName,
+    policyArn,
     action: 'reattached',
   };
 }
