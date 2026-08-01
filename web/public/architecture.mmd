@@ -1,0 +1,50 @@
+graph TD
+    User["User / Browser"]
+
+    subgraph Vercel["Vercel — Next.js App"]
+        UI["Console UI (/console)"]
+        Investigate["/api/investigate (SSE)"]
+        RemediateAWS["/api/remediate/aws"]
+        RemediateGH["/api/remediate/github"]
+        StatusGH["/api/status/github"]
+        DemoRepo["Bundled demo-repo/ source files"]
+    end
+
+    OpenRouter["OpenRouter LLM (gpt-4o-mini)"]
+
+    subgraph AWSAcct["AWS Account"]
+        IAMReadOnly["IAM read-only credential"]
+        IAMWrite["IAM scoped write credential"]
+        DemoRoles["Real IAM role chain: lambda-log-processor to admin-deploy-role"]
+    end
+
+    subgraph GH["GitHub"]
+        Repo["cursor-cyber-hack repo"]
+        Actions["GitHub Actions: exposure-scan.yml"]
+        PRs["Pull Requests"]
+    end
+
+    ModalFn["Modal: exposure-reasoning-ci function"]
+
+    User -->|select finding, Investigate| UI
+    UI --> Investigate
+    Investigate -->|reasoning + tool calls| OpenRouter
+    Investigate -->|getTrustEdges / getAttachedPolicyDetails| IAMReadOnly
+    IAMReadOnly --> DemoRoles
+    Investigate -->|listFiles / readFile, sandboxed| DemoRepo
+
+    UI -->|Confirm and Apply| RemediateAWS
+    RemediateAWS -->|DetachRolePolicy / AttachRolePolicy| IAMWrite
+    IAMWrite --> DemoRoles
+
+    UI -->|Confirm and Apply| RemediateGH
+    RemediateGH -->|REST API: branch, commit, PR| Repo
+    Repo --> PRs
+
+    UI --> StatusGH
+    StatusGH -->|list workflow runs| Actions
+
+    Repo -->|push / PR| Actions
+    Actions -->|curl| ModalFn
+    ModalFn -->|POST /api/investigate| Investigate
+    Actions -->|post verdict comment| PRs

@@ -46,13 +46,19 @@ Human-approved remediation ── agent PROPOSES a fix (AWS policy detach,
 
 Every arrow above is real, not narrated: real source files, a real AWS account, a real deployed agent, a real GitHub PR when remediation is approved.
 
-## Case study: the two findings
+## Architecture
+
+![Architecture diagram](public/architecture.png)
+
+## Case study: three findings
 
 **`SNYK-2026-001`** — `log-utils-lite@1.2.3`, CVSS 6.5 (the kind of score that sits in a backlog for weeks). The agent reads `handler.ts` → `processor.ts`, confirms the vulnerable `parseLogEntry` function is called directly on every Lambda invocation with attacker-controlled input — this is a **remote code execution** class vulnerability, meaning a successful exploit hands the attacker the Lambda's own IAM credentials. It then traces the real AWS account: `lambda-log-processor` → `data-processor-role` → `admin-deploy-role`, and finds `admin-deploy-role` has the actual `AdministratorAccess` managed policy attached. **Verdict: CRITICAL.** A "medium" CVSS score was hiding a full account-takeover path.
 
 **`SNYK-2026-002`** — `string-pad-utility@0.0.9`, CVSS 9.1 (the kind of score that triggers an immediate page). The agent reads `cli.ts` → `deploy-utils.ts` and finds the vulnerable `padString` call is commented out — imported, never invoked, dead code. Regardless of what IAM permissions `ci-deploy-bot` has, there's no way to trigger the vulnerability in the first place. **Verdict: LOW.** A "critical" CVSS score was noise.
 
-This contrast — proving the agent both escalates *and* correctly stands down — is the actual claim being tested: reachability-based prioritization catches what CVSS-alone triage misses in both directions.
+**`SNYK-2026-003`** — `url-fetch-proxy@2.1.0`, CVSS 7.4, an **SSRF** vulnerability — the same class of bug behind the 2019 Capital One breach. The agent traces `handler.ts` → `fetcher.ts` → `response-formatter.ts` and finds the service fetches attacker-supplied URLs with no validation, meaning a request to `169.254.169.254` (the cloud instance metadata service) would leak the role's live credentials back to the attacker. It then walks a real 3-hop AWS chain — `api-gateway-service` → `secrets-sync-role` → `payments-data-role` — and finds `payments-data-role` carries a **custom-scoped** policy (`s3:GetObject`/`s3:ListBucket` on a `customer-payments-data` bucket), not a generic admin policy. The agent has to read the actual policy actions to catch this — a name-based heuristic would miss it entirely.
+
+This spread — escalating a boring-looking score, standing down a scary-looking one, and catching a scoped-but-sensitive custom policy that no keyword match would flag — is the actual claim being tested: reachability-based, policy-content-aware prioritization catches what CVSS-alone triage misses in every direction.
 
 ## AWS integration (real, not mocked)
 
