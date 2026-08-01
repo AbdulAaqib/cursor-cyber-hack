@@ -67,13 +67,25 @@ export interface RemediationResult {
   branchName: string;
 }
 
-export async function openFixPr(findingId: string): Promise<RemediationResult> {
+function shortSha(sha: string): string {
+  return sha.slice(0, 7);
+}
+
+export async function openFixPr(
+  findingId: string,
+  onLog?: (line: string) => void,
+): Promise<RemediationResult> {
+  const log = (line: string) => {
+    if (onLog) onLog(line);
+  };
+
   const fix = FIXES[findingId];
   if (!fix) {
     throw new Error(`No fix defined for finding ${findingId}`);
   }
 
   // 1. Get main's current commit SHA
+  log(`Fetching main ref...`);
   const refRes = await githubFetch('/git/ref/heads/main');
   if (!refRes.ok) {
     throw new Error(
@@ -82,9 +94,11 @@ export async function openFixPr(findingId: string): Promise<RemediationResult> {
   }
   const refData = (await refRes.json()) as { object: { sha: string } };
   const mainSha = refData.object.sha;
+  log(`Done: main is at commit ${shortSha(mainSha)}`);
 
   // 2. Create new branch
   const branchName = `fix/${findingId}-remediation-${Date.now()}`;
+  log(`Creating branch ${branchName}...`);
   const createRefRes = await githubFetch('/git/refs', {
     method: 'POST',
     body: JSON.stringify({
@@ -97,8 +111,10 @@ export async function openFixPr(findingId: string): Promise<RemediationResult> {
       `Failed to create branch ${branchName}: ${createRefRes.status} ${await createRefRes.text()}`,
     );
   }
+  log(`Done: created branch ${branchName}`);
 
   // 3. Get current file blob SHA on the new branch
+  log(`Fetching file blob for ${fix.path} on ${branchName}...`);
   const contentsRes = await githubFetch(
     `/contents/${encodeURIComponent(fix.path)}?ref=${encodeURIComponent(branchName)}`,
   );
@@ -109,8 +125,10 @@ export async function openFixPr(findingId: string): Promise<RemediationResult> {
   }
   const contentsData = (await contentsRes.json()) as { sha: string };
   const fileSha = contentsData.sha;
+  log(`Done: found file blob ${shortSha(fileSha)}`);
 
   // 4. Update file on the new branch
+  log(`Committing fix to ${fix.path} on ${branchName}...`);
   const updateRes = await githubFetch(
     `/contents/${encodeURIComponent(fix.path)}`,
     {
@@ -128,8 +146,12 @@ export async function openFixPr(findingId: string): Promise<RemediationResult> {
       `Failed to update ${fix.path} on ${branchName}: ${updateRes.status} ${await updateRes.text()}\nBranch ${branchName} was created and may be orphaned — clean up manually if needed.`,
     );
   }
+  const updateData = (await updateRes.json()) as { content: { sha: string } };
+  const newBlobSha = updateData.content.sha;
+  log(`Done: committed fix (new blob ${shortSha(newBlobSha)})`);
 
   // 5. Open PR
+  log(`Opening pull request from ${branchName} to main...`);
   const title = `fix(${findingId}): automated remediation — ${fix.description}`;
   const body = `This PR was opened by the **Exposure Reasoning Agent** after explicit human approval.
 
@@ -152,7 +174,8 @@ export async function openFixPr(findingId: string): Promise<RemediationResult> {
       `Failed to create PR from ${branchName} to main: ${prRes.status} ${await prRes.text()}\nBranch ${branchName} exists with the fix commit — you can open a PR manually if needed.`,
     );
   }
-  const prData = (await prRes.json()) as { html_url: string };
+  const prData = (await prRes.json()) as { number: number; html_url: string };
+  log(`Done: opened PR #${prData.number}: ${prData.html_url}`);
 
   return { prUrl: prData.html_url, branchName };
 }

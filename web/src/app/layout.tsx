@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Sans, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import Nav from "@/components/Nav";
 
 const plexSans = IBM_Plex_Sans({
   variable: "--font-body",
@@ -34,6 +35,7 @@ export default function RootLayout({
       className={`${plexSans.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-[#0A0E14] text-[#E4E9F0] font-sans">
+        <Nav />
         {children}
       </body>
     </html>

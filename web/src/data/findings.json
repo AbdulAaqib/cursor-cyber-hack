@@ -16,5 +16,14 @@
     "affectedNode": "ci-deploy-bot",
     "repoPath": "ci-deploy-bot",
     "description": "Prototype pollution vulnerability in string padding utility"
+  },
+  {
+    "id": "SNYK-2026-003",
+    "package": "url-fetch-proxy@2.1.0",
+    "cve": "CVE-2026-11003",
+    "cvss": 7.4,
+    "affectedNode": "api-gateway-service",
+    "repoPath": "api-gateway-service",
+    "description": "Server-Side Request Forgery (SSRF) -- the proxy fetches attacker-supplied URLs with no validation against internal/link-local address ranges, allowing requests to the cloud instance metadata service to steal live IAM credentials."
   }
 ]
