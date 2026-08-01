@@ -1,0 +1,13 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <rect width="64" height="64" rx="8" fill="#0A0E14"/>
+  <rect x="1" y="1" width="62" height="62" rx="7" fill="none" stroke="#1E2733" stroke-width="1"/>
+
+  <!-- trace path: patient-zero -> hop -> critical, the product's own function as its mark -->
+  <line x1="14" y1="46" x2="30" y2="30" stroke="#22D3C7" stroke-width="2"/>
+  <line x1="30" y1="30" x2="48" y2="18" stroke="#F0465A" stroke-width="2"/>
+
+  <circle cx="14" cy="46" r="5" fill="#0A0E14" stroke="#22D3C7" stroke-width="2"/>
+  <circle cx="30" cy="30" r="5" fill="#0A0E14" stroke="#22D3C7" stroke-width="2"/>
+  <circle cx="48" cy="18" r="6" fill="#0A0E14" stroke="#F0465A" stroke-width="2.5"/>
+  <circle cx="48" cy="18" r="2" fill="#F0465A"/>
+</svg>

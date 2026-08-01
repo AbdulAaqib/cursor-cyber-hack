@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
@@ -357,6 +358,7 @@ export default function Home() {
     <div className="flex flex-col h-screen bg-background text-foreground font-sans">
       <header className="flex items-center justify-between gap-6 border-b border-border-hairline bg-panel px-6 py-3">
         <div className="flex items-center gap-3">
+          <Image src="/logo.svg" alt="" width={24} height={24} className="rounded" />
           <span
             className={`h-2 w-2 rounded-full bg-accent ${
               investigating ? 'animate-status-pulse' : ''
