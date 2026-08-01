@@ -67,18 +67,23 @@ This spread — escalating a boring-looking score, standing down a scary-looking
 | Credential | Permissions | Used by |
 |---|---|---|
 | `exposure-agent-readonly` | `iam:ListRoles`, `GetRole`, `ListAttachedRolePolicies`, `GetPolicy`, `GetPolicyVersion` — read-only, account-wide | The investigation agent, tracing the real trust graph |
-| `exposure-agent-remediator` | `iam:DetachRolePolicy` / `AttachRolePolicy` — **scoped by an IAM policy `Condition` to exactly one role (`admin-deploy-role`) and one policy ARN (`AdministratorAccess`)** | Only the human-approved "Approve & Apply" remediation action |
+| `exposure-agent-remediator` | `iam:DetachRolePolicy` / `AttachRolePolicy` — **scoped by IAM policy `Condition` blocks to exactly two role+policy pairs**: (`admin-deploy-role`, `AdministratorAccess`) and (`payments-data-role`, `CustomerPaymentsDataAccess`) — nothing else, no wildcards | Only the human-approved "Confirm & Apply" remediation action |
 
 If live AWS is unreachable (bad credentials, network error, permission denied), the server logs a warning and transparently falls back to the mock dataset — the demo never hard-fails because of a bad credential.
 
 ## Remediation: human-approved, not autonomous
 
-The agent can *recommend* a fix, but it never executes one unattended. Two remediation actions exist, both fixed and pre-authored (never generated freeform by the model at execution time — the LLM's job is to recommend, not to construct the exact command):
+The agent can *recommend* a fix, but it never executes one unattended. Remediation actions are fixed and pre-authored — never generated freeform by the model at execution time; the LLM's job is to recommend, not to construct the exact command. Every finding gets a code fix; two of the three (`SNYK-2026-001`, `SNYK-2026-003`) also get an AWS fix, since those are the two that reach a real dangerous role:
 
-1. **AWS**: detach `AdministratorAccess` from `admin-deploy-role` via the narrowly-scoped credential above. An "Undo" (re-attach) is always available, since this runs against a real account and the demo needs to be repeatable.
-2. **GitHub**: opens a real pull request against this repo with a pre-written code fix (input validation for finding 1, dead-import removal for finding 2), via the GitHub REST API directly — no local `git`/`gh` CLI dependency, so it works identically in local dev and on the deployed Vercel instance.
+| Finding | AWS action | GitHub action |
+|---|---|---|
+| `SNYK-2026-001` | Detach `AdministratorAccess` from `admin-deploy-role` | PR adding input validation to `processLogs` |
+| `SNYK-2026-002` | — (dead code, no reachable AWS path) | PR removing the dead `padString` import |
+| `SNYK-2026-003` | Detach `CustomerPaymentsDataAccess` from `payments-data-role` | PR adding URL validation to block internal/metadata-service addresses |
 
-Both require an explicit **two-stage confirmation** in the UI: "Prepare fix" reveals exactly what will happen, "Confirm & Apply" is a second, distinct click. Nothing executes on a single click.
+Both action types stream real-time logs of each actual API call as it happens (not a fake progress bar), and are joined into **one sequential flow** when both apply — the AWS fix runs first, then the GitHub PR, with one continuous timeline of log lines rather than two separate screens. An "Undo" (re-attach) is always available for the AWS step, since this runs against a real account and the demo needs to be repeatable.
+
+The whole thing requires an explicit **two-stage confirmation** in the UI: "Prepare remediation" reveals exactly what will happen, "Confirm & Apply" is a second, distinct click. Nothing executes on a single click.
 
 ## CI/CD integration
 
@@ -101,6 +106,8 @@ verdict posted as a PR/commit comment,
 linking back to the app for human-approved remediation
 ```
 
+The `/workflows` page's CI/CD tab shows this pipeline's **live** run history too — fetched from the GitHub API in real time (not a screenshot), click through to any run for its full logs.
+
 ## Honest positioning
 
 This is not a claim to have invented "attack path analysis" — Wiz and Orca Security have run mature, funded platforms in this category for years. The differentiation here is specific: a **lightweight, transparent, agent-driven** alternative built to run in minutes with zero infrastructure, where the reasoning is visible (every claim traces back to a real file or a real API response) rather than a black-box score.
@@ -117,9 +124,16 @@ npm run dev
 
 See `.env.local.example` for every variable and what each unlocks.
 
+## Site map
+
+- **`/`** — landing page: the pipeline thesis, all three case studies, honest positioning.
+- **`/console`** — the actual tool: pick a finding, watch the agent investigate live, review the verdict, run remediation.
+- **`/workflows`** — a tab per pipeline (Investigation / Remediation / CI-CD), including the live GitHub Actions run list.
+
 ## Demo script
 
-1. Run `SNYK-2026-001` — watch the agent read real source files, trace a real AWS IAM path to `admin-deploy-role`'s actual `AdministratorAccess` policy, and land on CRITICAL with a plain-English attack narrative.
+1. Run `SNYK-2026-001` on `/console` — watch the agent read real source files, trace a real AWS IAM path to `admin-deploy-role`'s actual `AdministratorAccess` policy, and land on CRITICAL with a plain-English attack narrative. Note the graph shows only this finding's chain — not all three at once.
 2. Run `SNYK-2026-002` — watch it correctly stand down to LOW despite the scarier CVSS score, because the vulnerable code path is provably dead.
-3. Click "Prepare fix" → "Confirm & Apply" on either action — show a real AWS policy detach (with Undo) or a real GitHub PR opening, live.
-4. Point at the CI workflow — every commit to this repo already runs this same investigation automatically.
+3. Run `SNYK-2026-003` — a deeper 3-hop SSRF-to-credential-theft chain reaching a role with a scoped custom policy, not a generic admin policy.
+4. On any CRITICAL/HIGH finding, click "Prepare remediation" → "Confirm & Apply" — watch the real-time log as it detaches the actual AWS policy, then opens the actual GitHub PR, in one sequence.
+5. Switch to `/workflows`, open the CI/CD tab, expand the repo card — it's pulling your real GitHub Actions run history live.
