@@ -47,29 +47,35 @@ const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
   AdministratorAccess: { x: 1000, y: 300 },
 };
 
-const SENSITIVITY_COLORS: Record<string, string> = {
-  CRITICAL: '#ef4444',
-  HIGH: '#f97316',
-  MEDIUM: '#eab308',
-  LOW: '#22c55e',
-  UNKNOWN: '#9ca3af',
+const SEVERITY_COLORS: Record<string, string> = {
+  CRITICAL: '#f0465a',
+  HIGH: '#f5943b',
+  MEDIUM: '#f0c43b',
+  LOW: '#3ecf8e',
+  UNKNOWN: '#6b7686',
 };
 
-function CustomNode({ data }: { data: { label: string; sensitivity?: string; visited?: boolean } }) {
-  const color = data.visited ? SENSITIVITY_COLORS[data.sensitivity ?? 'UNKNOWN'] : '#9ca3af';
+function CustomNode({
+  data,
+}: {
+  data: { label: string; sensitivity?: string; visited?: boolean; active?: boolean };
+}) {
+  const color = data.visited ? SEVERITY_COLORS[data.sensitivity ?? 'UNKNOWN'] : '#3a4453';
   return (
     <div
-      className="rounded-md border-2 px-4 py-2 text-sm font-medium shadow-sm transition-colors duration-500"
+      className={`rounded border px-3 py-2 font-mono text-xs transition-colors duration-500 ${
+        data.active ? 'animate-pulse-glow' : ''
+      }`}
       style={{
-        borderColor: color,
-        backgroundColor: data.visited ? '#ffffff' : '#f3f4f6',
-        color: data.visited ? '#111827' : '#6b7280',
+        borderColor: data.active ? '#22d3c7' : color,
+        backgroundColor: data.visited ? '#121821' : '#0d131b',
+        color: data.visited ? '#e4e9f0' : '#4b5566',
       }}
     >
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <div>{data.label}</div>
       {data.visited && data.sensitivity && (
-        <div className="text-xs mt-1 font-semibold" style={{ color }}>
+        <div className="text-[10px] mt-1 font-semibold tracking-wide" style={{ color }}>
           {data.sensitivity}
         </div>
       )}
@@ -80,6 +86,13 @@ function CustomNode({ data }: { data: { label: string; sensitivity?: string; vis
 
 const nodeTypes = { custom: CustomNode };
 
+const SEVERITY_BADGE: Record<string, string> = {
+  CRITICAL: 'bg-critical/15 border-critical text-critical',
+  HIGH: 'bg-high/15 border-high text-high',
+  MEDIUM: 'bg-medium/15 border-medium text-medium',
+  LOW: 'bg-low/15 border-low text-low',
+};
+
 export default function Home() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [selectedFindingId, setSelectedFindingId] = useState<string>('');
@@ -89,6 +102,7 @@ export default function Home() {
   const [visitedNodes, setVisitedNodes] = useState<Set<string>>(new Set());
   const [knownEdges, setKnownEdges] = useState<Set<string>>(new Set());
   const [nodeSensitivities, setNodeSensitivities] = useState<Record<string, string>>({});
+  const [activeNode, setActiveNode] = useState<string | null>(null);
   const reasoningRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -116,9 +130,10 @@ export default function Home() {
         label: id,
         sensitivity: nodeSensitivities[id],
         visited: visitedNodes.has(id),
+        active: activeNode === id,
       },
     }));
-  }, [visitedNodes, nodeSensitivities]);
+  }, [visitedNodes, nodeSensitivities, activeNode]);
 
   const edges: Edge[] = useMemo(() => {
     const baseEdges = [
@@ -131,18 +146,20 @@ export default function Home() {
       ...e,
       animated: knownEdges.has(e.id),
       style: {
-        stroke: knownEdges.has(e.id) ? '#111827' : '#d1d5db',
+        stroke: knownEdges.has(e.id) ? '#22d3c7' : '#242e3c',
         strokeWidth: knownEdges.has(e.id) ? 2 : 1,
         transition: 'all 0.5s',
       },
       labelStyle: {
-        fill: knownEdges.has(e.id) ? '#111827' : '#9ca3af',
-        fontSize: 12,
+        fill: knownEdges.has(e.id) ? '#e4e9f0' : '#4b5566',
+        fontSize: 11,
+        fontFamily: 'var(--font-mono)',
         fontWeight: knownEdges.has(e.id) ? 600 : 400,
       },
+      labelBgStyle: { fill: '#0a0e14', fillOpacity: 0.85 },
       markerEnd: {
         type: MarkerType.ArrowClosed,
-        color: knownEdges.has(e.id) ? '#111827' : '#d1d5db',
+        color: knownEdges.has(e.id) ? '#22d3c7' : '#242e3c',
       },
     }));
   }, [knownEdges]);
@@ -155,6 +172,7 @@ export default function Home() {
     setVisitedNodes(new Set());
     setKnownEdges(new Set());
     setNodeSensitivities({});
+    setActiveNode(null);
 
     const res = await fetch('/api/investigate', {
       method: 'POST',
@@ -189,6 +207,7 @@ export default function Home() {
             if (event.toolName === 'getTrustEdges') {
               const results = event.output as Array<{ target: string; event: string }>;
               const sourceNode = (event.input as { node: string }).node;
+              setActiveNode(sourceNode);
               setVisitedNodes((prev) => {
                 const next = new Set(prev);
                 next.add(sourceNode);
@@ -216,6 +235,7 @@ export default function Home() {
             if (event.toolName === 'getResourceSensitivity') {
               const node = (event.input as { node: string }).node;
               const out = event.output as { sensitivity: string };
+              setActiveNode(node);
               setNodeSensitivities((prev) => ({ ...prev, [node]: out.sensitivity }));
               setVisitedNodes((prev) => {
                 const next = new Set(prev);
@@ -226,6 +246,7 @@ export default function Home() {
           }
           if (event.type === 'verdict') {
             setVerdict(event.data as Verdict);
+            setActiveNode(null);
           }
         } catch {
           // ignore parse errors
@@ -234,132 +255,168 @@ export default function Home() {
     }
 
     setInvestigating(false);
+    setActiveNode(null);
   }, [selectedFindingId]);
 
-  const severityColor = useMemo(() => {
-    if (!verdict) return '';
-    const map: Record<string, string> = {
-      CRITICAL: 'bg-red-100 border-red-400 text-red-900',
-      HIGH: 'bg-orange-100 border-orange-400 text-orange-900',
-      MEDIUM: 'bg-yellow-100 border-yellow-400 text-yellow-900',
-      LOW: 'bg-gray-100 border-gray-400 text-gray-900',
-    };
-    return map[verdict.severity] ?? '';
-  }, [verdict]);
+  const selectedFinding = findings.find((f) => f.id === selectedFindingId);
 
   return (
-    <div className="flex flex-col h-screen">
-      <header className="bg-slate-900 text-white px-6 py-4">
-        <h1 className="text-lg font-bold">Exposure Reasoning Agent</h1>
-        <p className="text-xs text-slate-300 mt-1">
-          The average enterprise employee holds ~96,000 permissions — no human traces reachability at that scale manually.
+    <div className="flex flex-col h-screen bg-background text-foreground font-sans">
+      <header className="flex items-center justify-between gap-6 border-b border-border-hairline bg-panel px-6 py-3">
+        <div className="flex items-center gap-3">
+          <span
+            className={`h-2 w-2 rounded-full bg-accent ${
+              investigating ? 'animate-status-pulse' : ''
+            }`}
+          />
+          <h1 className="font-mono text-sm font-semibold tracking-wide text-foreground">
+            EXPOSURE REASONING AGENT
+          </h1>
+        </div>
+        <p className="hidden md:block text-xs text-muted font-mono">
+          ~96,000 permissions per employee. No human traces reachability at that scale manually.
         </p>
       </header>
 
+      <div className="flex items-center gap-3 border-b border-border-hairline bg-background px-6 py-3">
+        <label className="font-mono text-[11px] uppercase tracking-wider text-muted">
+          Finding
+        </label>
+        <select
+          className="rounded border border-border-hairline bg-panel px-3 py-1.5 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+          value={selectedFindingId}
+          onChange={(e) => setSelectedFindingId(e.target.value)}
+          disabled={investigating}
+        >
+          {findings.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.id} — {f.package} (CVSS {f.cvss})
+            </option>
+          ))}
+        </select>
+        {selectedFinding && (
+          <span className="hidden lg:inline text-xs text-muted truncate max-w-md">
+            {selectedFinding.description}
+          </span>
+        )}
+        <button
+          onClick={handleInvestigate}
+          disabled={investigating || !selectedFindingId}
+          className="ml-auto rounded bg-accent px-4 py-1.5 font-mono text-xs font-semibold text-[#0A0E14] transition-opacity hover:opacity-90 disabled:opacity-40"
+        >
+          {investigating ? 'INVESTIGATING…' : 'INVESTIGATE'}
+        </button>
+      </div>
+
       <main className="flex-1 flex overflow-hidden">
-        <aside className="w-96 flex flex-col border-r border-gray-200 bg-white">
-          <div className="p-4 border-b border-gray-200 space-y-3">
-            <label className="block text-sm font-medium text-gray-700">Select Finding</label>
-            <select
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-              value={selectedFindingId}
-              onChange={(e) => setSelectedFindingId(e.target.value)}
-              disabled={investigating}
-            >
-              {findings.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.id} — {f.package} (CVSS {f.cvss})
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={handleInvestigate}
-              disabled={investigating || !selectedFindingId}
-              className="w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-            >
-              {investigating ? 'Investigating…' : 'Investigate'}
-            </button>
-          </div>
-
-          <div className="flex-1 flex flex-col min-h-0">
-            <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 border-b border-gray-200">
-              Agent Reasoning
-            </div>
-            <div
-              ref={reasoningRef}
-              className="flex-1 overflow-auto p-4 text-sm text-gray-800 whitespace-pre-wrap"
-            >
-              {reasoning || (
-                <span className="text-gray-400 italic">
-                  Reasoning will appear here as the agent explores the graph…
-                </span>
-              )}
-            </div>
-          </div>
-
-          {verdict && (
-            <div className={`border-t-2 p-4 ${severityColor}`}>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold uppercase tracking-wider">Verdict</span>
-                <span className="rounded px-2 py-1 text-xs font-bold border bg-white">
-                  {verdict.severity}
-                </span>
-              </div>
-              <p className="text-sm font-medium mb-2">{verdict.pathSummary}</p>
-
-              <div className={`mb-3 inline-flex items-center gap-2 rounded px-2 py-1 text-xs font-semibold border ${verdict.codeReachable ? 'bg-orange-50 border-orange-300 text-orange-800' : 'bg-gray-50 border-gray-300 text-gray-600'}`}>
-                <span>Code path:</span>
-                <span>{verdict.codeReachable ? 'REACHABLE' : 'NOT REACHABLE'}</span>
-                <span className="font-normal">— {verdict.codeReachabilityReason}</span>
-              </div>
-
-              <div className="space-y-2">
-                <div>
-                  <div className="text-xs font-semibold uppercase text-opacity-80 mb-1">Hops</div>
-                  <ul className="space-y-1">
-                    {verdict.hops.map((h, i) => (
-                      <li key={i} className="text-xs">
-                        <span className="font-semibold">{h.from}</span> →{' '}
-                        <span className="font-semibold">{h.to}</span>{' '}
-                        <span className="text-gray-600">({h.event})</span>{' '}
-                        {h.risky ? (
-                          <span className="text-red-600 font-semibold">risky</span>
-                        ) : (
-                          <span className="text-green-600">safe</span>
-                        )}
-                        <div className="text-gray-500">{h.reason}</div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <div className="text-xs font-semibold uppercase text-opacity-80 mb-1">Counterfactual</div>
-                  <p className="text-xs">{verdict.counterfactual}</p>
-                </div>
-                <div>
-                  <div className="text-xs font-semibold uppercase text-opacity-80 mb-1">Recommendation</div>
-                  <p className="text-xs">{verdict.recommendation}</p>
-                </div>
-              </div>
-            </div>
-          )}
-        </aside>
-
-        <div className="flex-1 bg-slate-50">
+        <div className="flex-1 bg-background">
           <ReactFlow
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
             fitView
             attributionPosition="bottom-left"
+            proOptions={{ hideAttribution: false }}
           >
-            <Background gap={16} size={1} color="#e2e8f0" />
-            <Controls />
+            <Background gap={18} size={1} color="#161d28" />
+            <Controls className="[&>button]:!bg-panel [&>button]:!border-border-hairline [&>button]:!fill-foreground" />
           </ReactFlow>
         </div>
+
+        <aside className="w-[420px] flex flex-col border-l border-border-hairline bg-panel">
+          <div className="px-4 py-2 flex items-center gap-2 border-b border-border-hairline">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-muted">
+              Agent reasoning
+            </span>
+          </div>
+          <div
+            ref={reasoningRef}
+            className="console-scroll flex-1 overflow-auto p-4 font-mono text-[12px] leading-relaxed text-foreground/90 whitespace-pre-wrap"
+          >
+            {reasoning ? (
+              <>
+                {reasoning}
+                {investigating && <span className="cursor-blink" />}
+              </>
+            ) : (
+              <span className="text-muted italic">
+                &gt; awaiting investigation — select a finding and hit INVESTIGATE
+                {investigating && <span className="cursor-blink" />}
+              </span>
+            )}
+          </div>
+
+          {verdict && (
+            <div className="border-t border-border-hairline p-4 max-h-[55%] overflow-auto console-scroll">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-mono uppercase tracking-wider text-muted">
+                  Verdict
+                </span>
+                <span
+                  className={`rounded border px-2 py-0.5 font-mono text-[11px] font-bold ${SEVERITY_BADGE[verdict.severity]}`}
+                >
+                  {verdict.severity}
+                </span>
+              </div>
+
+              <p className="text-sm leading-relaxed text-foreground mb-3">{verdict.pathSummary}</p>
+
+              <div
+                className={`mb-3 inline-flex items-center gap-2 rounded border px-2 py-1 font-mono text-[11px] ${
+                  verdict.codeReachable
+                    ? 'border-high/40 bg-high/10 text-high'
+                    : 'border-border-hairline bg-background text-muted'
+                }`}
+              >
+                <span className="font-semibold">
+                  CODE {verdict.codeReachable ? 'REACHABLE' : 'NOT REACHABLE'}
+                </span>
+              </div>
+              <p className="text-xs text-muted mb-4">{verdict.codeReachabilityReason}</p>
+
+              <div className="space-y-3">
+                <div>
+                  <div className="text-[10px] font-mono font-semibold uppercase tracking-wider text-muted mb-1.5">
+                    Hops
+                  </div>
+                  <ul className="space-y-2">
+                    {verdict.hops.map((h, i) => (
+                      <li key={i} className="text-xs border-l-2 border-border-hairline pl-2">
+                        <div className="font-mono">
+                          <span className="text-foreground">{h.from}</span>
+                          <span className="text-muted"> → </span>
+                          <span className="text-foreground">{h.to}</span>
+                          <span className="text-muted"> ({h.event}) </span>
+                          {h.risky ? (
+                            <span className="text-critical font-semibold">risky</span>
+                          ) : (
+                            <span className="text-low font-semibold">safe</span>
+                          )}
+                        </div>
+                        <div className="text-muted mt-0.5">{h.reason}</div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <div className="text-[10px] font-mono font-semibold uppercase tracking-wider text-muted mb-1">
+                    Counterfactual
+                  </div>
+                  <p className="text-xs text-foreground/80">{verdict.counterfactual}</p>
+                </div>
+                <div>
+                  <div className="text-[10px] font-mono font-semibold uppercase tracking-wider text-muted mb-1">
+                    Recommendation
+                  </div>
+                  <p className="text-xs text-foreground/80">{verdict.recommendation}</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </aside>
       </main>
 
-      <footer className="bg-white border-t border-gray-200 px-6 py-2 text-xs text-gray-500">
+      <footer className="border-t border-border-hairline bg-panel px-6 py-2 text-[11px] font-mono text-muted">
         Lightweight, agent-driven alternative to attack-path-analysis platforms like Wiz/Orca — built to run in minutes with zero infrastructure.
       </footer>
     </div>
